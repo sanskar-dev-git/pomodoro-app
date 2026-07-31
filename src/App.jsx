@@ -7,11 +7,25 @@ export default function App() {
   const [completedSessions, setCompletedSessions] = useState(0);
   const [ambientSound, setAmbientSound] = useState('off');
 
+  // Task Management State (Saved to LocalStorage)
+  const [tasks, setTasks] = useState(() => {
+    const saved = localStorage.getItem('pomodoro_tasks');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [estimatedPomos, setEstimatedPomos] = useState(1);
+  const [activeTaskId, setActiveTaskId] = useState(null);
+  const [isTaskPanelOpen, setIsTaskPanelOpen] = useState(false);
+
   const canvasRef = useRef(null);
   const audioCtxRef = useRef(null);
   const activeSoundNodesRef = useRef([]);
 
-  // Production Standard Mode Configurations
+  // Save tasks to LocalStorage whenever they change
+  useEffect(() => {
+    localStorage.setItem('pomodoro_tasks', JSON.stringify(tasks));
+  }, [tasks]);
+
   const modes = {
     WORK: {
       label: 'WORK',
@@ -41,7 +55,7 @@ export default function App() {
 
   const currentTheme = modes[mode];
 
-  // Dynamic Starfield Canvas Engine
+  // Starfield Canvas Animation
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -113,7 +127,7 @@ export default function App() {
     };
   }, [isRunning, mode]);
 
-  // Audio Feedback Synthesizer
+  // Audio Feedback
   const playSound = (type = 'click') => {
     try {
       if (!audioCtxRef.current) {
@@ -187,7 +201,6 @@ export default function App() {
 
         oscLeft.type = 'sine';
         oscRight.type = 'sine';
-        
         oscLeft.frequency.value = 200;
         oscRight.frequency.value = 240;
 
@@ -263,6 +276,32 @@ export default function App() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // Task Handlers
+  const addTask = (e) => {
+    e.preventDefault();
+    if (!newTaskTitle.trim()) return;
+    const newTask = {
+      id: Date.now(),
+      title: newTaskTitle.trim(),
+      estimated: Number(estimatedPomos) || 1,
+      completed: 0,
+      isDone: false,
+    };
+    setTasks([...tasks, newTask]);
+    if (!activeTaskId) setActiveTaskId(newTask.id);
+    setNewTaskTitle('');
+    setEstimatedPomos(1);
+  };
+
+  const toggleTaskDone = (id) => {
+    setTasks(tasks.map((t) => (t.id === id ? { ...t, isDone: !t.isDone } : t)));
+  };
+
+  const deleteTask = (id) => {
+    setTasks(tasks.filter((t) => t.id !== id));
+    if (activeTaskId === id) setActiveTaskId(null);
+  };
+
   useEffect(() => {
     let timer = null;
     if (isRunning && timeLeft > 0) {
@@ -272,10 +311,21 @@ export default function App() {
       playSound('start');
       if (mode === 'WORK') {
         setCompletedSessions((prev) => prev + 1);
+        
+        // Auto-increment active task pomodoro progress
+        if (activeTaskId) {
+          setTasks((prevTasks) =>
+            prevTasks.map((t) =>
+              t.id === activeTaskId ? { ...t, completed: t.completed + 1 } : t
+            )
+          );
+        }
       }
     }
     return () => clearInterval(timer);
-  }, [isRunning, timeLeft, mode]);
+  }, [isRunning, timeLeft, mode, activeTaskId]);
+
+  const activeTask = tasks.find((t) => t.id === activeTaskId);
 
   return (
     <div className="min-h-screen w-screen flex flex-col justify-between items-center text-white select-none overflow-hidden p-4 sm:p-6 bg-[#020617] relative">
@@ -283,23 +333,28 @@ export default function App() {
       {/* Background Starfield Canvas */}
       <canvas ref={canvasRef} className="absolute inset-0 z-0 pointer-events-none" />
 
-      {/* Header */}
-      <header className="relative z-10 text-center pt-1 sm:pt-2">
-        <h1 
-          className="text-2xl sm:text-4xl md:text-5xl font-extrabold tracking-tight bg-clip-text text-transparent transition-all duration-500"
-          style={{
-            backgroundImage: `linear-gradient(to right, ${currentTheme.color}, #ffffff)`
-          }}
+      {/* Top Header */}
+      <header className="relative z-10 w-full flex justify-between items-center max-w-2xl px-2 pt-1 sm:pt-2">
+        <div>
+          <h1 
+            className="text-2xl sm:text-3xl font-extrabold tracking-tight bg-clip-text text-transparent transition-all duration-500"
+            style={{ backgroundImage: `linear-gradient(to right, ${currentTheme.color}, #ffffff)` }}
+          >
+            Pomodoro
+          </h1>
+        </div>
+
+        {/* Task Panel Drawer Toggle */}
+        <button
+          onClick={() => { playSound('click'); setIsTaskPanelOpen(!isTaskPanelOpen); }}
+          className="flex items-center gap-2 px-3 py-1.5 bg-slate-900/80 hover:bg-slate-800 border border-slate-800 rounded-xl text-xs font-semibold text-gray-300 transition cursor-pointer shadow-lg backdrop-blur-md"
         >
-          Pomodoro
-        </h1>
-        <p className="text-gray-400 text-[10px] sm:text-xs mt-0.5 tracking-wider uppercase font-medium">
-          Stay focused, stay productive.
-        </p>
+          📋 Tasks ({tasks.filter(t => !t.isDone).length})
+        </button>
       </header>
 
-      {/* Main Content (Fits tight to screen height) */}
-      <main className="relative z-10 flex flex-col items-center justify-center gap-3 sm:gap-5 my-auto w-full max-w-xl">
+      {/* Main Core Timer Display */}
+      <main className="relative z-10 flex flex-col items-center justify-center gap-3 sm:gap-4 my-auto w-full max-w-xl">
         
         {/* Mode Tabs */}
         <div className="flex bg-slate-900/80 p-1.5 rounded-2xl border border-slate-800/80 shadow-2xl backdrop-blur-md">
@@ -308,9 +363,7 @@ export default function App() {
               key={m}
               onClick={() => handleModeChange(m)}
               className={`px-3 sm:px-5 py-1.5 sm:py-2 rounded-xl text-xs font-bold tracking-wider transition-all duration-300 cursor-pointer ${
-                mode === m
-                  ? modes[m].activeTab
-                  : 'text-gray-400 hover:text-gray-200'
+                mode === m ? modes[m].activeTab : 'text-gray-400 hover:text-gray-200'
               }`}
             >
               {modes[m].label}
@@ -318,9 +371,20 @@ export default function App() {
           ))}
         </div>
 
-        {/* Viewport-Scaled Dynamic Ring */}
+        {/* Active Task Indicator */}
+        {activeTask && (
+          <div className="flex items-center gap-2 bg-slate-900/60 px-4 py-1.5 rounded-full border border-slate-800/80 text-xs text-gray-300 backdrop-blur-sm">
+            <span className="text-[10px] uppercase font-bold text-gray-400">Current Task:</span>
+            <span className="font-semibold text-white">{activeTask.title}</span>
+            <span className="text-[10px] text-cyan-400 font-mono ml-1">
+              ({activeTask.completed}/{activeTask.estimated} 🎯)
+            </span>
+          </div>
+        )}
+
+        {/* Dynamic Glowing Ring */}
         <div 
-          className="relative flex items-center justify-center w-[220px] h-[220px] sm:w-[280px] sm:h-[280px] md:w-[320px] md:h-[320px] max-h-[40vh] max-w-[40vh] rounded-full border-4 sm:border-[5px] transition-all duration-500 bg-slate-950/80 backdrop-blur-md"
+          className="relative flex items-center justify-center w-[210px] h-[210px] sm:w-[270px] sm:h-[270px] md:w-[300px] md:h-[300px] max-h-[38vh] max-w-[38vh] rounded-full border-4 sm:border-[5px] transition-all duration-500 bg-slate-950/80 backdrop-blur-md"
           style={{
             borderColor: currentTheme.color,
             boxShadow: `0 0 40px ${currentTheme.glow}`
@@ -356,7 +420,7 @@ export default function App() {
           </button>
         </div>
 
-        {/* Ambience Control Center */}
+        {/* Ambience Controls */}
         <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3 bg-slate-900/70 px-4 py-2 rounded-2xl border border-slate-800/80 text-xs text-gray-300 backdrop-blur-md shadow-xl">
           <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Ambience:</span>
           
@@ -395,6 +459,108 @@ export default function App() {
         </div>
 
       </main>
+
+      {/* Collapsible Task Manager Overlay Drawer */}
+      {isTaskPanelOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex justify-center items-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 w-full max-w-md shadow-2xl relative flex flex-col gap-4">
+            
+            <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                📋 Task Planner
+              </h2>
+              <button
+                onClick={() => setIsTaskPanelOpen(false)}
+                className="text-gray-400 hover:text-white text-lg font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Add Task Form */}
+            <form onSubmit={addTask} className="flex gap-2">
+              <input
+                type="text"
+                placeholder="What are you working on?"
+                value={newTaskTitle}
+                onChange={(e) => setNewTaskTitle(e.target.value)}
+                className="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-500"
+              />
+              <input
+                type="number"
+                min="1"
+                max="10"
+                value={estimatedPomos}
+                onChange={(e) => setEstimatedPomos(e.target.value)}
+                className="w-14 bg-slate-950 border border-slate-800 rounded-xl px-2 py-2 text-xs text-white text-center focus:outline-none focus:border-cyan-500"
+                title="Estimated Pomodoros"
+              />
+              <button
+                type="submit"
+                className="bg-cyan-500 hover:bg-cyan-600 text-black font-bold px-4 py-2 rounded-xl text-xs transition cursor-pointer"
+              >
+                Add
+              </button>
+            </form>
+
+            {/* Task List */}
+            <div className="flex flex-col gap-2 max-h-60 overflow-y-auto pr-1">
+              {tasks.length === 0 ? (
+                <p className="text-xs text-gray-500 text-center py-6">No tasks added yet. Add one above to start tracking!</p>
+              ) : (
+                tasks.map((task) => (
+                  <div
+                    key={task.id}
+                    onClick={() => setActiveTaskId(task.id)}
+                    className={`flex items-center justify-between p-3 rounded-xl border transition cursor-pointer ${
+                      activeTaskId === task.id
+                        ? 'bg-cyan-500/10 border-cyan-500/40'
+                        : 'bg-slate-950/60 border-slate-800/80 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 overflow-hidden">
+                      <input
+                        type="checkbox"
+                        checked={task.isDone}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          toggleTaskDone(task.id);
+                        }}
+                        className="rounded accent-cyan-500 cursor-pointer"
+                      />
+                      <span className={`text-xs font-medium truncate ${task.isDone ? 'line-through text-gray-500' : 'text-gray-200'}`}>
+                        {task.title}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] text-gray-400 font-mono">
+                        {task.completed}/{task.estimated} 🎯
+                      </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteTask(task.id);
+                        }}
+                        className="text-xs text-gray-500 hover:text-red-400 transition"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <button
+              onClick={() => setIsTaskPanelOpen(false)}
+              className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-xs font-bold text-gray-300 rounded-xl transition cursor-pointer mt-1"
+            >
+              Done & Close
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="relative z-10 text-[11px] sm:text-xs text-gray-400 font-medium tracking-wide self-end pb-1">
